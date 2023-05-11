@@ -25,6 +25,7 @@ type transportSessions interface {
 	WithCancel(ctx context.Context) context.Context
 	WithTimeout(ctx context.Context, d time.Duration) context.Context
 	WithInterval(ctx context.Context, d time.Duration) context.Context
+	WithDisconnectOnClose(ctx context.Context) context.Context
 }
 
 type sessions struct {
@@ -86,6 +87,23 @@ type lifecycle struct {
 	cancel *sync.Map
 
 	removeTransport func(SessionID)
+}
+
+func (c *lifecycle) WithDisconnectOnClose(ctx context.Context) context.Context {
+	sessionID, ok := ctx.Value(ctxSessionID).(SessionID)
+	if !ok {
+		// there is no session to attach the context to
+		return ctx
+	}
+	ctx = context.WithValue(ctx, eios.SessionDisconnectFunctionKey, func() func() {
+		return func() {
+			c.removeSession(sessionID)
+			if c.removeTransport != nil {
+				c.removeTransport(sessionID)
+			}
+		}
+	})
+	return ctx
 }
 
 func (c *lifecycle) WithCancel(ctx context.Context) context.Context {

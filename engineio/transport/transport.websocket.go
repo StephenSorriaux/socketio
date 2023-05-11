@@ -66,6 +66,16 @@ func (t *WebsocketTransport) With(opts ...Option) {
 
 func (t *WebsocketTransport) InnerTransport() *Transport { return t.Transport }
 
+func (t *WebsocketTransport) ConnClose(code ws.StatusCode, reason string, ctx context.Context) error {
+	err := t.conn.Close(code, reason)
+	if done, ok := ctx.Value(eios.SessionDisconnectFunctionKey).(func() func()); ok {
+		if cleanup := done(); cleanup != nil {
+			cleanup()
+		}
+	}
+	return err
+}
+
 func (t *WebsocketTransport) Run(w http.ResponseWriter, r *http.Request, opts ...Option) (err error) {
 	t.With(opts...)
 
@@ -95,7 +105,7 @@ func (t *WebsocketTransport) Run(w http.ResponseWriter, r *http.Request, opts ..
 	grp.Go(func() error { return t.outgoing(r.WithContext(ctx)) })
 
 	err = grp.Wait()
-	t.conn.Close(ws.StatusNormalClosure, "done")
+	t.ConnClose(ws.StatusNormalClosure, "done", ctx)
 	return err
 }
 
@@ -161,7 +171,7 @@ func (t *WebsocketTransport) incoming(ctx context.Context) (err error) {
 
 	var done func()
 	var reason string
-	defer func() { t.conn.Close(ws.StatusNormalClosure, reason) }()
+	defer func() { t.ConnClose(ws.StatusNormalClosure, reason, ctx) }()
 
 	var start = time.Now()
 Write:
@@ -259,7 +269,7 @@ func (t *WebsocketTransport) outgoing(r *http.Request) (err error) {
 	}
 
 	var unbuffered = new(sync.WaitGroup)
-	defer t.conn.Close(ws.StatusNormalClosure, "read")
+	defer t.ConnClose(ws.StatusNormalClosure, "read", ctx)
 
 	for {
 		if !t.buffered {
@@ -309,7 +319,7 @@ func (t *WebsocketTransport) outgoing(r *http.Request) (err error) {
 				}
 			}
 			t.conn.CloseRead(ctx)
-			t.conn.Close(ws.StatusNormalClosure, "cross origin WebSocket accepted")
+			t.ConnClose(ws.StatusNormalClosure, "cross origin WebSocket accepted", ctx)
 			return nil
 		case eiop.PingPacket:
 			cw, err := t.conn.Writer(ctx, ws.MessageText)
